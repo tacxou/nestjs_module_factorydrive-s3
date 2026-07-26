@@ -7,13 +7,26 @@ import {
 } from '@tacxou/nestjs_module_factorydrive'
 import { AwsS3Storage } from '../src/aws-s3.storage'
 
-type ErrorWithStatus = Error & { statusCode?: number }
+type ErrorWithStatus = Error & {
+  statusCode?: number
+  Code?: string
+  $metadata?: { httpStatusCode?: number }
+}
 
-function makeError(name: string, statusCode?: number): ErrorWithStatus {
+function makeError(
+  name: string,
+  options?: { statusCode?: number; Code?: string; httpStatusCode?: number },
+): ErrorWithStatus {
   const error = new Error(name) as ErrorWithStatus
   error.name = name
-  if (statusCode !== undefined) {
-    error.statusCode = statusCode
+  if (options?.statusCode !== undefined) {
+    error.statusCode = options.statusCode
+  }
+  if (options?.Code !== undefined) {
+    error.Code = options.Code
+  }
+  if (options?.httpStatusCode !== undefined) {
+    error.$metadata = { httpStatusCode: options.httpStatusCode }
   }
   return error
 }
@@ -77,14 +90,28 @@ describe('AwsS3Storage', () => {
     })
   })
 
-  it('exists retourne false sur 404', async () => {
+  it('exists retourne false sur 404 (statusCode SDK v2)', async () => {
     const { storage, driver } = createStorage()
     driver.headObject.mockImplementationOnce(async () => {
-      throw makeError('NotFound', 404)
+      throw makeError('NotFound', { statusCode: 404 })
     })
 
     const result = await storage.exists('missing.txt')
     expect(result.exists).toBe(false)
+  })
+
+  it('exists retourne false sur 404 (forme AWS SDK v3)', async () => {
+    const { storage, driver } = createStorage()
+    driver.headObject.mockImplementationOnce(async () => {
+      throw makeError('NotFound', { httpStatusCode: 404 })
+    })
+
+    const result = await storage.exists('missing.txt')
+    expect(result.exists).toBe(false)
+    expect(result.raw).toMatchObject({
+      name: 'NotFound',
+      $metadata: { httpStatusCode: 404 },
+    })
   })
 
   it('exists retourne true si headObject passe', async () => {
@@ -124,15 +151,31 @@ describe('AwsS3Storage', () => {
     expect(driver.deleteObject).toHaveBeenCalledTimes(1)
   })
 
-  it('put délègue au driver S3', async () => {
+  it('put délègue au driver S3 et attend putObject', async () => {
     const { storage, driver } = createStorage()
-    await storage.put('put.txt', 'content')
+    const result = await storage.put('put.txt', 'content')
 
     expect(driver.putObject).toHaveBeenCalledWith({
       Key: 'put.txt',
       Body: 'content',
       Bucket: 'my-bucket',
     })
+    expect(result.raw).toEqual({
+      put: {
+        Key: 'put.txt',
+        Body: 'content',
+        Bucket: 'my-bucket',
+      },
+    })
+  })
+
+  it('put propage le rejet de putObject (pas de promesse non gérée)', async () => {
+    const { storage, driver } = createStorage()
+    driver.putObject.mockImplementationOnce(async () => {
+      throw makeError('AccessDenied')
+    })
+
+    await expect(storage.put('denied.txt', 'content')).rejects.toBeInstanceOf(UnknownException)
   })
 
   it('flatList itère sur toutes les pages', async () => {

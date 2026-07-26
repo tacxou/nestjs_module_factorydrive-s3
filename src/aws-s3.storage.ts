@@ -33,6 +33,25 @@ function handleError(err: Error, path: string, bucket: string): Error {
   }
 }
 
+/** Detect missing-object errors from AWS SDK v2 and v3 shapes. */
+function isNotFound(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as {
+    name?: string
+    Code?: string
+    $metadata?: { httpStatusCode?: number }
+    statusCode?: number
+  }
+  return (
+    e.name === 'NotFound' ||
+    e.name === 'NoSuchKey' ||
+    e.Code === 'NotFound' ||
+    e.Code === 'NoSuchKey' ||
+    e.$metadata?.httpStatusCode === 404 ||
+    e.statusCode === 404
+  )
+}
+
 // noinspection JSUnusedGlobalSymbols
 export class AwsS3Storage extends AbstractStorage {
   protected $driver: S3
@@ -76,7 +95,7 @@ export class AwsS3Storage extends AbstractStorage {
       const result = await this.$driver.headObject({ Key: location, Bucket: this.$bucket })
       return { exists: true, raw: result }
     } catch (e) {
-      if (e.statusCode === 404) {
+      if (isNotFound(e)) {
         return { exists: false, raw: e }
       } else {
         throw handleError(e, location, this.$bucket)
@@ -134,8 +153,12 @@ export class AwsS3Storage extends AbstractStorage {
 
   public async getStream(location: string): Promise<NodeJS.ReadableStream> {
     const params = { Key: location, Bucket: this.$bucket }
-    const res = await this.$driver.getObject(params)
-    return res.Body as NodeJS.ReadableStream
+    try {
+      const res = await this.$driver.getObject(params)
+      return res.Body as NodeJS.ReadableStream
+    } catch (e) {
+      throw handleError(e, location, this.$bucket)
+    }
   }
 
   public async move(src: string, dest: string): Promise<Response> {
@@ -146,7 +169,11 @@ export class AwsS3Storage extends AbstractStorage {
 
   public async put(location: string, content: Buffer | NodeJS.ReadableStream | string): Promise<Response> {
     try {
-      const result = this.$driver.putObject({ Key: location, Body: content as Buffer, Bucket: this.$bucket })
+      const result = await this.$driver.putObject({
+        Key: location,
+        Body: content as Buffer,
+        Bucket: this.$bucket,
+      })
       return { raw: result }
     } catch (e) {
       throw handleError(e, location, this.$bucket)

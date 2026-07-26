@@ -90,7 +90,27 @@ const storage = new AwsS3Storage({
 })
 ```
 
-For S3-compatible providers (MinIO, DigitalOcean Spaces, etc.), pass your custom endpoint/options through standard AWS SDK `S3ClientConfig`.
+For S3-compatible providers (MinIO, DigitalOcean Spaces, Backblaze B2, Cloudflare R2, etc.), pass your custom endpoint/options through standard AWS SDK `S3ClientConfig`. Do **not** hardcode provider-specific options in the driver — leave them to the consumer via `config`.
+
+### Backblaze B2 (S3-compatible)
+
+B2 often requires disabling AWS SDK v3 flexible checksums on put/get. Pass them through `S3ClientConfig`:
+
+```ts
+const storage = new AwsS3Storage({
+  bucket: 'my-b2-bucket',
+  region: 'us-west-004',
+  endpoint: 'https://s3.us-west-004.backblazeb2.com',
+  credentials: {
+    accessKeyId: process.env.B2_KEY_ID!,
+    secretAccessKey: process.env.B2_APPLICATION_KEY!,
+  },
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
+})
+```
+
+These checksum options are optional and should not be set for real AWS S3 unless you have a specific need.
 
 ## Available methods
 
